@@ -1,25 +1,29 @@
 import os
 import re
+import asyncio
 import aiohttp
-from pyrogram import Client, filters
+from aiohttp import web
+from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.errors import UserNotParticipant
 from motor.motor_asyncio import AsyncIOMotorClient
 
-# ================= CONFIG =================
+# ================= ENV =================
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URL = os.getenv("MONGO_URL")
 
-DB_CHANNEL_ID = int(os.getenv("DB_CHANNEL_ID"))   # private channel id
+DB_CHANNEL_ID = int(os.getenv("DB_CHANNEL_ID"))   # private storage channel id
 CHANNEL_LINK = os.getenv("CHANNEL_LINK")          # https://t.me/yourchannel
 GPLINKS_API = os.getenv("GPLINKS_API")
+PORT = int(os.getenv("PORT", 8000))
+
 GPLINKS_DOMAIN = "gplinks.in"
 
 # ================= BOT =================
 app = Client(
-    "upsc_style_bot",
+    "movie_search_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
@@ -34,8 +38,11 @@ async def get_shortlink(url):
     api = f"https://{GPLINKS_DOMAIN}/api?api={GPLINKS_API}&url={url}"
     async with aiohttp.ClientSession() as session:
         async with session.get(api) as resp:
-            data = await resp.json()
-            return data.get("shortenedUrl", url)
+            try:
+                data = await resp.json()
+                return data.get("shortenedUrl", url)
+            except:
+                return url
 
 # ================= FORCE JOIN =================
 async def is_joined(user_id):
@@ -52,20 +59,20 @@ async def is_joined(user_id):
 async def start(_, message):
     if not await is_joined(message.from_user.id):
         return await message.reply_text(
-            "❌ **Bot use karne ke liye channel join karna zaroori hai**",
+            "❌ **Bot use karne ke liye channel join karo**",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK)]
             ])
         )
 
     await message.reply_text(
-        "👋 **Welcome!**\n\n"
-        "📚 UPSC / Study material search karo\n"
-        "🔍 Example: *Polity Notes*"
+        "🎬 **Movie Search Bot Ready!**\n\n"
+        "🔍 Movie name likho\n"
+        "📂 Example: *KGF 2*"
     )
 
 # ================= SEARCH =================
-@app.on_message(filters.text & ~filters.command([]))
+@app.on_message(filters.text & ~filters.command(["start"]))
 async def search(_, message):
     if not await is_joined(message.from_user.id):
         return await message.reply_text(
@@ -82,14 +89,12 @@ async def search(_, message):
     regex = re.compile(query, re.IGNORECASE)
     results = await db.find({"file_name": regex}).to_list(10)
 
-   if not results:
-    return await message.reply_text(
-        "❌ Movie nahi mili 😕\n\n"
-        "🔎 Ho sakta hai spelling galat ho\n"
-        "✔ English name try karo\n"
-        "✔ Year / language add karo\n\n"
-        "📌 Example: *KGF Chapter 2 2022 Hindi*"
-    )
+    if not results:
+        return await message.reply_text(
+            "❌ **Movie nahi mili**\n\n"
+            "👉 Spelling check karo\n"
+            "👉 Short name try karo"
+        )
 
     buttons = []
     bot_username = (await app.get_me()).username
@@ -97,7 +102,6 @@ async def search(_, message):
     for file in results:
         deep_link = f"https://t.me/{bot_username}?start={file['file_id']}"
         short = await get_shortlink(deep_link)
-
         buttons.append([
             InlineKeyboardButton(text=file["file_name"], url=short)
         ])
@@ -122,15 +126,15 @@ async def send_file(_, message):
     file = await db.find_one({"file_id": file_id})
 
     if not file:
-        return await message.reply_text("❌ File expired / not found")
+        return await message.reply_text("❌ File not found / expired")
 
     await app.send_document(
         chat_id=message.chat.id,
         document=file["file_id"],
-        caption=f"📘 {file['file_name']}"
+        caption=f"🎬 **{file['file_name']}**"
     )
 
-# ================= INDEX FILES =================
+# ================= AUTO INDEX =================
 @app.on_message(filters.channel & filters.chat(DB_CHANNEL_ID))
 async def index_files(_, message):
     if not message.document:
@@ -140,8 +144,22 @@ async def index_files(_, message):
         "file_id": message.document.file_id,
         "file_name": message.document.file_name
     }
-
     await db.insert_one(data)
 
-# ================= RUN =================
-app.run()
+# ================= DUMMY WEB SERVER (Koyeb FREE TRICK) =================
+async def web_server():
+    web_app = web.Application()
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+
+# ================= MAIN =================
+async def main():
+    await app.start()
+    await web_server()
+    print("🤖 Bot is running 24×7...")
+    await idle()
+
+if __name__ == "__main__":
+    asyncio.get_event_loop().run_until_complete(main())
