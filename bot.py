@@ -148,7 +148,12 @@ async def index_files(_, message):
 
 # ================= DUMMY WEB SERVER (Koyeb FREE TRICK) =================
 async def web_server():
+    async def handle(request):
+        return web.Response(text="OK")
+
     web_app = web.Application()
+    web_app.router.add_get("/", handle)
+
     runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
