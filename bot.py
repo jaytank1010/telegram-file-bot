@@ -8,7 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 # --- JAY TANK'S FINAL CONFIGURATION ---
 API_ID = 39676458
 API_HASH = "5cbbab7cce3e7abcb6232bbb4772d9f6"
-BOT_TOKEN = "8363286559:AAHe5YWJkjd-qE-FRnfFf07ZnH4V0KKTFUM"
+BOT_TOKEN = "8363286559:AAEfCUy7cFzfegxWPSlJXuU4pw9PKpwihNg"
 MONGO_URL = "mongodb+srv://Jay:Jay10@cluster0.q2umpq1.mongodb.net/?retryWrites=true&w=majority"
 DB_CHANNEL_ID = -1003884650366
 CHANNEL_LINK = "https://t.me/+IlD4EhrhIBY3MmE1"
