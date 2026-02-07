@@ -1,170 +1,90 @@
 import os
+import requests
 import re
-import asyncio
-import aiohttp
-from aiohttp import web
-from pyrogram import Client, filters, idle
+from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from pyrogram.errors import UserNotParticipant
 from motor.motor_asyncio import AsyncIOMotorClient
 
-# ================= ENV =================
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-MONGO_URL = os.getenv("MONGO_URL")
+# --- JAY TANK'S FINAL CONFIGURATION ---
+API_ID = 39676458
+API_HASH = "5cbbab7cce3e7abcb6232bbb4772d9f6"
+BOT_TOKEN = "8363286559:AAHe5YWJkjd-qE-FRnfFf07ZnH4V0KKTFUM"
+MONGO_URL = "mongodb+srv://Jay:Jay10@cluster0.q2umpq1.mongodb.net/?retryWrites=true&w=majority"
+DB_CHANNEL_ID = -1003884650366
+CHANNEL_LINK = "https://t.me/+IlD4EhrhIBY3MmE1"
+GPLINKS_API = "Db2b094793689ffb0c0c5e71468d5b89e10c9c3e"
 
-DB_CHANNEL_ID = int(os.getenv("DB_CHANNEL_ID"))   # private storage channel id
-CHANNEL_LINK = os.getenv("CHANNEL_LINK")          # https://t.me/yourchannel
-GPLINKS_API = os.getenv("GPLINKS_API")
-PORT = int(os.getenv("PORT", 8000))
+# --- DATABASE SETUP ---
+db_client = AsyncIOMotorClient(MONGO_URL)
+db = db_client["MovieBotDB"]
+files_col = db["files"]
 
-GPLINKS_DOMAIN = "gplinks.in"
+app = Client("JayMovieBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# ================= BOT =================
-app = Client(
-    "movie_search_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
-
-# ================= DATABASE =================
-mongo = AsyncIOMotorClient(MONGO_URL)
-db = mongo["filebot"]["files"]
-
-# ================= SHORTLINK =================
-async def get_shortlink(url):
-    api = f"https://{GPLINKS_DOMAIN}/api?api={GPLINKS_API}&url={url}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(api) as resp:
-            try:
-                data = await resp.json()
-                return data.get("shortenedUrl", url)
-            except:
-                return url
-
-# ================= FORCE JOIN =================
-async def is_joined(user_id):
+# GPLinks Shortener Function
+def get_shortlink(url):
     try:
-        await app.get_chat_member(DB_CHANNEL_ID, user_id)
-        return True
-    except UserNotParticipant:
-        return False
-    except:
-        return False
+        api_url = f"https://gplinks.in/api?api={GPLINKS_API}&url={url}"
+        res = requests.get(api_url).json()
+        if res.get("status") == "success":
+            return res["shortenedUrl"]
+        return url
+    except Exception as e:
+        print(f"GPLinks Error: {e}")
+        return url
 
-# ================= START =================
-@app.on_message(filters.command("start"))
-async def start(_, message):
-    if not await is_joined(message.from_user.id):
-        return await message.reply_text(
-            "❌ **Bot use karne ke liye channel join karo**",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK)]
-            ])
-        )
+# 1. Indexing Logic: Direct Upload aur Forwarded Files dono ko index karega
+@app.on_message(filters.chat(DB_CHANNEL_ID) & (filters.document | filters.video))
+async def index_files(client, message):
+    file = message.document or message.video
+    # File name ko lowercase mein save kar rahe hain taaki search aasaan ho
+    file_name = file.file_name.lower() if file.file_name else "unknown_file"
+    
+    file_data = {
+        "file_name": file_name,
+        "file_id": file.file_id
+    }
+    
+    # MongoDB mein update ya insert karein
+    await files_col.update_one({"file_id": file.file_id}, {"$set": file_data}, upsert=True)
+    await message.reply_text(f"✅ Indexed Successfully:\n`{file_name}`")
 
-    await message.reply_text(
-        "🎬 **Movie Search Bot Ready!**\n\n"
-        "🔍 Movie name likho\n"
-        "📂 Example: *KGF 2*"
-    )
-
-# ================= SEARCH =================
-@app.on_message(filters.text & ~filters.command(["start"]))
-async def search(_, message):
-    if not await is_joined(message.from_user.id):
-        return await message.reply_text(
-            "❌ Pehle channel join karo",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK)]
-            ])
-        )
-
-    query = message.text.strip()
-    if len(query) < 2:
-        return
-
-    regex = re.compile(query, re.IGNORECASE)
-    results = await db.find({"file_name": regex}).to_list(10)
+# 2. Search Logic (Private Chat mein)
+@app.on_message(filters.text & filters.private)
+async def search(client, message):
+    if message.text.startswith("/"): return
+    
+    query = message.text.lower()
+    # Database mein partial search ke liye regex use kar rahe hain
+    cursor = files_col.find({"file_name": {"$regex": query}})
+    results = await cursor.to_list(length=15)
 
     if not results:
-        return await message.reply_text(
-            "❌ **Movie nahi mili**\n\n"
-            "👉 Spelling check karo\n"
-            "👉 Short name try karo"
-        )
-
-    buttons = []
-    bot_username = (await app.get_me()).username
-
-    for file in results:
-        deep_link = f"https://t.me/{bot_username}?start={file['file_id']}"
-        short = await get_shortlink(deep_link)
-        buttons.append([
-            InlineKeyboardButton(text=file["file_name"], url=short)
-        ])
-
-    await message.reply_text(
-        "📂 **Search Results:**",
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
-
-# ================= FILE SEND =================
-@app.on_message(filters.command("start") & filters.regex(r"^/start\s+"))
-async def send_file(_, message):
-    if not await is_joined(message.from_user.id):
-        return await message.reply_text(
-            "❌ Channel join karo file lene ke liye",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK)]
-            ])
-        )
-
-    file_id = message.command[1]
-    file = await db.find_one({"file_id": file_id})
-
-    if not file:
-        return await message.reply_text("❌ File not found / expired")
-
-    await app.send_document(
-        chat_id=message.chat.id,
-        document=file["file_id"],
-        caption=f"🎬 **{file['file_name']}**"
-    )
-
-# ================= AUTO INDEX =================
-@app.on_message(filters.channel & filters.chat(DB_CHANNEL_ID))
-async def index_files(_, message):
-    if not message.document:
+        await message.reply_text("❌ Sorry Jay! Movie nahi mili. Spelling check karein.")
         return
 
-    data = {
-        "file_id": message.document.file_id,
-        "file_name": message.document.file_name
-    }
-    await db.insert_one(data)
+    buttons = []
+    bot_username = (await client.get_me()).username
+    
+    for file in results:
+        # Har file ke liye download link aur use GPLinks se shorten karna
+        long_url = f"https://t.me/{bot_username}?start={file['file_id']}"
+        short_url = get_shortlink(long_url)
+        buttons.append([InlineKeyboardButton(f"🎬 {file['file_name'][:40]}", url=short_url)])
 
-# ================= DUMMY WEB SERVER (Koyeb FREE TRICK) =================
-async def web_server():
-    async def handle(request):
-        return web.Response(text="OK")
+    await message.reply_text("🍿 Results Mil Gaye (Click to Download):", reply_markup=InlineKeyboardMarkup(buttons))
 
-    web_app = web.Application()
-    web_app.router.add_get("/", handle)
+# 3. Start Command & File Delivery
+@app.on_message(filters.command("start") & filters.private)
+async def start(client, message):
+    if len(message.command) > 1:
+        file_id = message.command[1]
+        try:
+            await client.send_document(message.chat.id, file_id, caption="Aapki Movie Taiyar Hai! 🎥\n\nJoin: " + CHANNEL_LINK)
+        except Exception as e:
+            await message.reply_text(f"❌ Error: File send nahi ho saki. {e}")
+    else:
+        await message.reply_text(f"👋 Namaste Jay!\n\nMain movies dhoondh kar aapko earning link de sakta hoon. Bas movie ka naam likh kar bhejein.")
 
-    runner = web.AppRunner(web_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-
-# ================= MAIN =================
-async def main():
-    await app.start()
-    await web_server()
-    print("🤖 Bot is running 24×7...")
-    await idle()
-
-if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(main())
+print("🤖 Bot is running 24x7 on Koyeb...")
+app.run()
