@@ -82,8 +82,14 @@ async def search(_, message):
     regex = re.compile(query, re.IGNORECASE)
     results = await db.find({"file_name": regex}).to_list(10)
 
-    if not results:
-        return await message.reply_text("❌ Koi file nahi mili")
+   if not results:
+    return await message.reply_text(
+        "❌ Movie nahi mili 😕\n\n"
+        "🔎 Ho sakta hai spelling galat ho\n"
+        "✔ English name try karo\n"
+        "✔ Year / language add karo\n\n"
+        "📌 Example: *KGF Chapter 2 2022 Hindi*"
+    )
 
     buttons = []
     bot_username = (await app.get_me()).username
